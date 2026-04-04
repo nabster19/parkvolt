@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  role      String   @default("DRIVER") // HOST, DRIVER
+  isEvUser  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  spots     ParkingSpot[] // As a host
+  bookings  Booking[]     // As a driver
+  reviews   Review[]      // As a reviewer
+}
+
+model ParkingSpot {
+  id              String   @id @default(cuid())
+  hostId          String
+  host            User     @relation(fields: [hostId], references: [id])
+  
+  title           String
+  description     String
+  latitude        Float
+  longitude       Float
+  address         String
+  
+  pricePerHour    Float
+  isAvailable     Boolean  @default(true)
+  
+  // EV Features
+  hasEvCharging   Boolean  @default(false)
+  chargerType     String?  // LEVEL_1, LEVEL_2, LEVEL_3, DC_FAST
+  chargingFeeRule String?  // FLAT_FEE, PER_KWH, PER_HOUR
+  chargingFee     Float?
+  
+  // IoT Future-Proofing
+  sensorId        String?  @unique // For future IoT presence sensors
+  realTimeOccupied Boolean @default(false) // Updated by IoT webhook
+  lastSensorPing  DateTime?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  bookings        Booking[]
+  reviews         Review[]
+}
+
+model Booking {
+  id              String   @id @default(cuid())
+  driverId        String
+  driver          User     @relation(fields: [driverId], references: [id])
+  spotId          String
+  spot            ParkingSpot @relation(fields: [spotId], references: [id])
+  
+  startTime       DateTime
+  endTime         DateTime
+  
+  // Cost breakdown
+  parkingCost     Float
+  chargingCost    Float    @default(0)
+  totalCost       Float
+  
+  status          String   @default("PENDING") // PENDING, CONFIRMED, COMPLETED, CANCELLED
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  review          Review?
+}
+
+model Review {
+  id                  String   @id @default(cuid())
+  authorId            String
+  author              User     @relation(fields: [authorId], references: [id])
+  spotId              String
+  spot                ParkingSpot @relation(fields: [spotId], references: [id])
+  bookingId           String   @unique
+  booking             Booking  @relation(fields: [bookingId], references: [id])
+  
+  // Dual-rating system
+  parkingQualityRating  Int      // 1 to 5
+  chargingReliabilityRating Int? // 1 to 5, optional
+  
+  comment             String?
+  
+  createdAt           DateTime @default(now())
+}
