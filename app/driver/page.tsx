@@ -1,359 +1,307 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { Zap, MapPin, Search, Star, Filter, CreditCard, ChevronRight, CheckCircle2 } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
+import dynamic from "next/dynamic";
+import { Zap, MapPin, Search, Star, Filter, CreditCard, ChevronRight, CheckCircle2, Clock, Camera, X, Shield, Navigation, AlertCircle, ExternalLink } from "lucide-react";
+import { useSpots, Spot } from "@/hooks/useSpots";
+import { useBookings, Booking } from "@/hooks/useBookings";
+import { calculateDynamicPrice } from "@/utils/pricing";
 
-// Mock Data
-const MOCK_SPOTS = [
-  {
-    id: "1",
-    title: "Downtown Tech Hub Parking",
-    pricePerHour: 4.5,
-    distanceKm: 1.2,
-    hasEvCharging: true,
-    chargerType: "Level 3 (DC Fast)",
-    chargingFee: 15,
-    rating: 4.9,
-    chargingRating: 4.8
-  },
-  {
-    id: "2",
-    title: "Main Street Driveway",
-    pricePerHour: 2.0,
-    distanceKm: 0.8,
-    hasEvCharging: false,
-    chargerType: null,
-    chargingFee: 0,
-    rating: 4.5,
-    chargingRating: null
-  },
-  {
-    id: "3",
-    title: "Eco-Friendly Residence",
-    pricePerHour: 3.5,
-    distanceKm: 3.0,
-    hasEvCharging: true,
-    chargerType: "Level 2",
-    chargingFee: 5,
-    rating: 4.7,
-    chargingRating: 4.9
-  },
-  {
-    id: "4",
-    title: "City Center Garage Spot 42",
-    pricePerHour: 6.0,
-    distanceKm: 0.5,
-    hasEvCharging: true,
-    chargerType: "Level 2",
-    chargingFee: 8,
-    rating: 4.2,
-    chargingRating: 4.0
-  },
-  {
-    id: "5",
-    title: "Suburban Cheap Spot",
-    pricePerHour: 1.5,
-    distanceKm: 5.5,
-    hasEvCharging: false,
-    chargerType: null,
-    chargingFee: 0,
-    rating: 4.6,
-    chargingRating: null
-  }
-];
+interface MapProps {
+  spots: any[];
+  selectedSpot: any | null;
+  onSelectSpot: (spot: any) => void;
+  userLocation: [number, number];
+  isNavigating: boolean;
+  routeCoordinates?: [number, number][];
+}
+
+const MapComponent = dynamic<MapProps>(() => import("@/components/MapComponent"), {
+  ssr: false,
+  loading: () => <div className="h-full w-full bg-[#1E1E22] flex items-center justify-center text-white/20">Loading Map...</div>
+});
+
+const DEFAULT_USER_LOC: [number, number] = [12.3150, 76.6400];
 
 export default function DriverDashboard() {
-  const [needCharging, setNeedCharging] = useState(false);
-  const [selectedSpot, setSelectedSpot] = useState<typeof MOCK_SPOTS[0] | null>(null);
-  const [bookingHours, setBookingHours] = useState(2);
+  const { spots, setSpotAvailability } = useSpots();
+  const { createBooking, endBooking, getActiveBooking, bookings } = useBookings();
+  const [selectedSpot, setSelectedSpot] = useState<Spot | null>(null);
+  
+  const [vehicleType, setVehicleType] = useState<"EV" | "Non-EV">("EV");
+  const [usageType, setUsageType] = useState<"parking" | "charging">("parking");
+
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [userLoc, setUserLoc] = useState<[number, number]>(DEFAULT_USER_LOC);
+  const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
+  const [routeInfo, setRouteInfo] = useState<{distance: string, duration: string} | null>(null);
+  const [locError, setLocError] = useState<string | null>(null);
+
+  const [activeSession, setActiveSession] = useState<Booking | null>(null);
+  const [batteryLevel, setBatteryLevel] = useState(25);
+  const [urgencyLevel, setUrgencyLevel] = useState<"low" | "medium" | "high">("medium");
+
+  const [startTime, setStartTime] = useState("10:00");
+  const [endTime, setEndTime] = useState("12:00");
+  const [duration, setDuration] = useState(2);
+  
   const [showCheckout, setShowCheckout] = useState(false);
-  const [paymentState, setPaymentState] = useState<'idle' | 'processing' | 'success'>('idle');
+  const [paymentState, setPaymentState] = useState<'idle' | 'scanning' | 'processing' | 'success'>('idle');
 
-  // Smart Recommendation Engine (The Logic)
-  // Formula: Score = (Weight_dist * Distance) + (Weight_price * Price) - (EV_bonus)
-  // Lower score is better.
-  const recommendedSpots = useMemo(() => {
-    let filtered = MOCK_SPOTS;
-    
-    // Toggle Logic: If on, hide all spots that don't have EV capabilities
-    if (needCharging) {
-      filtered = filtered.filter(spot => spot.hasEvCharging);
+  // Session Re-hydration/Auto-Cleanup
+  useEffect(() => {
+    const active = getActiveBooking();
+    if (active) {
+       if (Date.now() > active.endTime) {
+          endBooking(active.id);
+          setSpotAvailability(active.slotId, true, undefined);
+       } else {
+          setActiveSession(active);
+          setIsNavigating(true);
+          const spot = spots.find(s => s.id === active.slotId);
+          if (spot) fetchRealRoute(spot);
+       }
+    } else {
+       setActiveSession(null);
+       setIsNavigating(false);
+       setRouteCoords([]);
     }
+  }, [bookings.length, spots.length]);
 
-    const WEIGHT_DIST = 2; // Priority to distance
-    const WEIGHT_PRICE = 1;
+  useEffect(() => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => setUserLoc([position.coords.latitude, position.coords.longitude]),
+        () => setLocError("Location access denied.")
+      );
+    }
+  }, []);
 
-    return filtered.map(spot => {
-      let evBonus = 0;
-      if (needCharging && spot.hasEvCharging) {
-        // High EV bonus if user needs it
-        evBonus = 10;
-        // Even more bonus for faster chargers
-        if (spot.chargerType?.includes("Level 3")) evBonus += 5;
+  const fetchRealRoute = async (dest: Spot) => {
+    try {
+      const url = `https://router.project-osrm.org/route/v1/driving/${userLoc[1]},${userLoc[0]};${dest.lng},${dest.lat}?overview=full&geometries=geojson`;
+      const res = await fetch(url);
+      const data = await res.json();
+      
+      if (data.routes?.[0]) {
+        const route = data.routes[0];
+        setRouteCoords(route.geometry.coordinates.map((c: any) => [c[1], c[0]]));
+        setRouteInfo({ 
+           distance: (route.distance / 1000).toFixed(1), 
+           duration: Math.ceil(route.duration / 60).toString() 
+        });
+        setLocError(null);
       }
-
-      const score = (WEIGHT_DIST * spot.distanceKm) + (WEIGHT_PRICE * spot.pricePerHour) - evBonus;
-      return { ...spot, score };
-    }).sort((a, b) => a.score - b.score);
-  }, [needCharging]);
-
-  const bestMatchId = recommendedSpots.length > 0 ? recommendedSpots[0].id : null;
-
-  const calculateTotal = (spot: typeof MOCK_SPOTS[0]) => {
-    const parkingTotal = spot.pricePerHour * bookingHours;
-    let total = parkingTotal;
-    if (spot.hasEvCharging && needCharging) {
-      total += spot.chargingFee;
-    }
-    return { parkingTotal, chargingTotal: needCharging && spot.hasEvCharging ? spot.chargingFee : 0, total };
+    } catch (err) { console.error(err); }
   };
 
+  // 2. Payment Lifecycle Management
+  useEffect(() => {
+    if (paymentState === 'processing') {
+      const timer = setTimeout(() => {
+        handleStartNavigation();
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+    if (paymentState === 'success') {
+      const timer = setTimeout(() => {
+        setShowCheckout(false);
+        setPaymentState('idle');
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [paymentState]);
+
+  const handleStartNavigation = async () => {
+    if (!selectedSpot || !priceBreakdown) return;
+    try {
+      // Finalize the booking before starting navigation
+      const newBooking = createBooking(selectedSpot.id, duration, priceBreakdown.totalPrice);
+      setSpotAvailability(selectedSpot.id, false, newBooking.id);
+      
+      await fetchRealRoute(selectedSpot);
+      setActiveSession(newBooking);
+      setIsNavigating(true);
+      setPaymentState('success'); // Visual feedback
+    } catch (err) {
+      console.error("Booking sequence failed", err);
+      setPaymentState('idle');
+    }
+  };
+
+  const handleEndEarly = () => {
+    if (!activeSession) return;
+    endBooking(activeSession.id);
+    setSpotAvailability(activeSession.slotId, true, undefined);
+    setActiveSession(null);
+    setIsNavigating(false);
+    setRouteCoords([]);
+    setSelectedSpot(null);
+  };
+
+  const priceBreakdown = useMemo(() => {
+    if (!selectedSpot) return null;
+    return calculateDynamicPrice(selectedSpot, usageType === 'charging', duration, startTime, spots);
+  }, [selectedSpot, usageType, duration, startTime, spots]);
+
+  const recommendedSpots = useMemo(() => {
+    return spots.filter(spot => {
+       if (!spot.isAvailable || spot.isDisabledByHost) return false;
+       if (vehicleType === "Non-EV") return !spot.hasEvCharging;
+       if (usageType === "charging") return spot.hasEvCharging;
+       return true;
+    }).map(spot => {
+      let score = 0;
+      const distanceWeight = urgencyLevel === "high" ? 100 : urgencyLevel === "medium" ? 40 : 15;
+      score += (spot.distanceKm * distanceWeight);
+      score -= (spot.rating * 20);
+      return { ...spot, score };
+    }).sort((a, b) => a.score - b.score);
+  }, [spots, vehicleType, usageType, urgencyLevel]);
+
   return (
-    <div className="flex h-[calc(100vh-4rem)] max-w-[1600px] mx-auto overflow-hidden">
-      {/* Sidebar - Listings */}
-      <div className="w-full md:w-1/3 border-r border-white/10 bg-dark-bg flex flex-col h-full relative z-10">
-        
-        {/* Search & Filters */}
-        <div className="p-4 border-b border-white/10 shrink-0">
-          <div className="relative mb-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50" />
-            <input 
-              type="text" 
-              placeholder="Where are you going?" 
-              className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:border-electric-blue focus:ring-1 focus:ring-electric-blue transition-all"
-            />
+    <div className="flex h-[calc(100vh-4rem)] max-w-[1600px] mx-auto overflow-hidden text-white font-sans">
+      <div className="w-full md:w-[380px] border-r border-white/10 bg-dark-bg flex flex-col h-full relative z-10 shadow-2xl">
+        {activeSession ? (
+          <div className="p-8 h-full flex flex-col bg-[#0A0A0B]/50 backdrop-blur-xl">
+             <div className="flex items-center gap-4 mb-8">
+                <div className="p-4 rounded-3xl bg-neon-green/10 border border-neon-green/20"><Clock className="w-8 h-8 text-neon-green animate-pulse" /></div>
+                <div><h2 className="text-2xl font-black uppercase tracking-tighter">Monitoring</h2><span className="text-[10px] text-white/30 uppercase font-black tracking-widest leading-none">Session In-Progress</span></div>
+             </div>
+             <div className="bg-white/5 border border-white/10 rounded-[40px] p-8 mb-6">
+                <h3 className="text-xl font-bold truncate mb-1">{spots.find(s => s.id === activeSession.slotId)?.title}</h3>
+                <p className="text-white/40 text-sm mb-6 flex items-center gap-2"><Navigation className="w-4 h-4 text-electric-blue" /> Optimal road route active.</p>
+                <div className="grid grid-cols-1 gap-4">
+                   <div className="bg-black/40 p-5 rounded-2xl border border-white/5"><span className="text-[10px] text-white/20 uppercase font-black block mb-1">Session ID</span><div className="text-xl font-black text-neon-green uppercase tracking-tighter">PRK-{activeSession.id.toUpperCase()}</div></div>
+                </div>
+             </div>
+             <div className="flex-1"></div>
+             <div className="space-y-3 mb-8">
+                <button onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${spots.find(s => s.id === activeSession.slotId)?.lat},${spots.find(s => s.id === activeSession.slotId)?.lng}`, "_blank")} className="w-full bg-white/5 border border-white/10 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-white/10 transition-all"><ExternalLink className="w-4 h-4" /> GOOGLE MAPS BRIDGE</button>
+                <button onClick={handleEndEarly} className="w-full bg-red-500 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-red-600 transition-all shadow-lg shadow-red-500/20"><X className="w-4 h-4" /> TERMINATE PARKING</button>
+             </div>
           </div>
-
-          <div className="flex items-center justify-between">
-            <label className="flex items-center cursor-pointer gap-3 group">
-              <div className="relative">
-                <input 
-                  type="checkbox" 
-                  className="sr-only" 
-                  checked={needCharging}
-                  onChange={() => setNeedCharging(!needCharging)}
-                />
-                <div className={`block w-12 h-6 rounded-full transition-colors ${needCharging ? 'bg-neon-green' : 'bg-white/10 border border-white/20'}`}></div>
-                <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${needCharging ? 'translate-x-6' : 'translate-x-0'}`}></div>
+        ) : (
+          <>
+            <div className="p-6 border-b border-white/10 shrink-0 space-y-5 bg-[#0D0D0E]/50 backdrop-blur-xl">
+              <div className="flex items-center justify-between"><h2 className="text-xl font-black text-white flex items-center gap-2 tracking-tighter"><Zap className="w-5 h-5 text-neon-green fill-neon-green" /> PARKVOLT LIVE</h2><div className="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-white/5 border border-white/10 text-white/40">Realtime Scan</div></div>
+              <div className="flex bg-white/5 p-1 rounded-xl border border-white/5">
+                {(['EV', 'Non-EV'] as const).map(type => (
+                  <button key={type} onClick={() => setVehicleType(type)} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${vehicleType === type ? 'bg-white text-black shadow-lg' : 'text-white/20 hover:text-white/40'}`}>{type}</button>
+                ))}
               </div>
-              <span className={`text-sm font-medium flex items-center gap-1.5 transition-colors ${needCharging ? 'text-neon-green' : 'text-white/70 group-hover:text-white'}`}>
-                <Zap className="w-4 h-4" />
-                I need to charge
-              </span>
-            </label>
-            <button className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-colors">
-              <Filter className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Spot List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {recommendedSpots.length === 0 ? (
-            <div className="text-center py-10 text-white/50">
-              No spots found matching your criteria.
+              <div className="flex bg-white/5 p-1 rounded-xl border border-white/5">
+                {(['parking', 'charging'] as const).map(intent => (
+                  <button key={intent} disabled={vehicleType === 'Non-EV' && intent === 'charging'} onClick={() => setUsageType(intent)} className={`flex-1 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-10 ${usageType === intent ? 'bg-electric-blue text-black shadow-lg shadow-electric-blue/20' : 'text-white/20 hover:text-white/40'}`}>{intent}</button>
+                ))}
+              </div>
+              <div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" /><input type="text" placeholder="Search Mysuru Zones..." className="w-full bg-white/5 border border-white/10 rounded-xl pl-11 pr-4 py-3 text-xs outline-none focus:border-electric-blue transition-all" /></div>
             </div>
-          ) : (
-            recommendedSpots.map(spot => (
-              <div 
-                key={spot.id} 
-                onClick={() => setSelectedSpot(spot)}
-                className={`relative p-4 rounded-xl cursor-pointer border transition-all ${
-                  selectedSpot?.id === spot.id 
-                    ? 'bg-white/10 border-electric-blue shadow-[0_0_15px_rgba(0,240,255,0.15)]' 
-                    : 'bg-white/[0.02] border-white/5 hover:border-white/20'
-                }`}
-              >
-                {spot.id === bestMatchId && (
-                  <div className="absolute -top-3 -right-2 bg-gradient-to-r from-electric-blue to-neon-green text-black text-xs font-bold px-3 py-1 rounded-full shadow-lg flex items-center gap-1">
-                    <Star className="w-3 h-3 fill-black" /> Best Match
-                  </div>
-                )}
-                
-                <h3 className="font-semibold text-[15px] mb-1">{spot.title}</h3>
-                
-                <div className="flex items-center gap-3 text-xs text-white/60 mb-3">
-                  <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {spot.distanceKm} km away</span>
-                  <span className="flex items-center gap-1"><Star className="w-3 h-3 text-yellow-400 fill-yellow-400" /> {spot.rating}</span>
-                </div>
-
-                <div className="flex items-center justify-between mt-4">
-                  <div className="font-bold text-lg">${spot.pricePerHour}<span className="text-xs text-white/50 font-normal">/hr</span></div>
-                  {spot.hasEvCharging && (
-                    <div className="flex items-center gap-1 text-xs text-neon-green bg-neon-green/10 px-2 py-1 rounded-md">
-                      <Zap className="w-3 h-3" />
-                      {spot.chargerType}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+              {recommendedSpots.map((spot) => (
+                <div key={spot.id} onClick={() => setSelectedSpot(spot)} className={`relative p-5 rounded-2xl cursor-pointer border transition-all duration-300 ${selectedSpot?.id === spot.id ? 'bg-white/10 border-electric-blue shadow-[0_0_25px_rgba(0,240,255,0.1)] scale-[1.02]' : 'bg-white/[0.02] border-white/5 hover:border-white/20 hover:translate-x-1'}`}>
+                  <div className="flex gap-4">
+                    <div className="mt-1 text-3xl shrink-0 drop-shadow-lg">{spot.hasEvCharging ? "🔋" : "📍"}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-start mb-1"><h3 className="font-bold text-base truncate pr-2">{spot.title}</h3><span className="text-[10px] font-black text-electric-blue shrink-0">₹{spot.basePrice}/hr</span></div>
+                      <div className="flex items-center gap-4 text-[10px] text-white/40 font-black uppercase tracking-widest"><span>{spot.distanceKm} km</span><span>•</span><span><Star className="inline w-3 h-3 text-yellow-500 fill-yellow-500 mr-1 translate-y-[-1px]" />{spot.rating}</span></div>
                     </div>
-                  )}
+                  </div>
                 </div>
-              </div>
-            ))
-          )}
-        </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Main Content - Map & Booking */}
-      <div className="hidden md:flex flex-1 flex-col relative bg-[#1E1E22] overflow-hidden">
-        {/* Mock Map Background */}
-        <div className="absolute inset-0 opacity-20 pointer-events-none" 
-             style={{ backgroundImage: 'radial-gradient(circle at center, #27272A 2px, transparent 2px)', backgroundSize: '40px 40px' }} />
+      <div className="flex-1 relative bg-[#1E1E22]">
+        <MapComponent spots={recommendedSpots} selectedSpot={selectedSpot} onSelectSpot={setSelectedSpot} userLocation={userLoc} isNavigating={isNavigating} routeCoordinates={routeCoords} />
         
-        {/* Map UI Overlay placeholders */}
-        <div className="absolute inset-0 flex items-center justify-center p-8 pointer-events-none">
-           {selectedSpot ? (
-              <div className="w-16 h-16 rounded-full bg-electric-blue/20 flex items-center justify-center shadow-[0_0_30px_rgba(0,240,255,0.4)] animate-pulse border border-electric-blue relative">
-                 <MapPin className="w-8 h-8 text-electric-blue" />
-              </div>
-           ) : (
-              <div className="text-white/20 font-bold text-2xl flex flex-col items-center gap-4">
-                 <MapPin className="w-16 h-16" />
-                 Select a spot on the left
-              </div>
-           )}
-        </div>
-
-        {/* Spot Details Panel (Appears at bottom when selected) */}
         {selectedSpot && !showCheckout && (
-          <div className="absolute bottom-6 left-6 right-6 bg-dark-bg/90 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl z-20 animate-in slide-in-from-bottom-5">
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <h2 className="text-2xl font-bold mb-2">{selectedSpot.title}</h2>
-                <div className="flex flex-wrap items-center gap-4 text-sm text-white/70">
-                  <span className="flex items-center gap-1"><MapPin className="w-4 h-4 text-electric-blue" /> {selectedSpot.distanceKm} km away</span>
-                  <span className="flex items-center gap-1"><Star className="w-4 h-4 text-yellow-400 fill-yellow-400" /> {selectedSpot.rating} Parking</span>
-                  {selectedSpot.hasEvCharging && (
-                     <span className="flex items-center gap-1"><Star className="w-4 h-4 text-neon-green fill-neon-green" /> {selectedSpot.chargingRating} Charging</span>
-                  )}
-                </div>
+          <div className="absolute bottom-8 left-8 right-8 bg-dark-bg/95 backdrop-blur-2xl border border-white/10 rounded-[40px] p-8 shadow-2xl z-20 animate-in slide-in-from-bottom-10">
+            <div className="flex justify-between items-start mb-8">
+              <div className="flex-1 min-w-0 pr-6">
+                <h2 className="text-3xl font-black mb-2 uppercase tracking-tighter truncate">{selectedSpot.title}</h2>
+                <div className="flex items-center gap-4 text-[10px] font-black text-white/30 uppercase tracking-[0.2em]"><span className="flex items-center gap-1.5"><MapPin className="w-4 h-4 text-electric-blue" /> Zone G3</span><span className="flex items-center gap-1.5"><Zap className="w-4 h-4 text-neon-green" /> Level 2 Fast</span></div>
               </div>
-              <div className="text-right">
-                <div className="text-3xl font-extrabold text-electric-blue">${selectedSpot.pricePerHour}<span className="text-base text-white/50 font-normal">/hr</span></div>
+              <div className="text-right shrink-0">
+                 <div className="text-[10px] font-black text-neon-green uppercase tracking-widest mb-1">Live Estimate</div>
+                 <div className="text-4xl font-black tabular-nums tracking-tighter">₹{priceBreakdown?.totalPrice}</div>
               </div>
             </div>
-
-            {selectedSpot.hasEvCharging && (
-              <div className="mb-6 p-4 rounded-xl border border-neon-green/20 bg-neon-green/5 flex items-center justify-between">
-                <div>
-                  <h4 className="font-semibold text-neon-green flex items-center gap-2"><Zap className="w-4 h-4" /> EV Charging Unit</h4>
-                  <p className="text-sm text-white/60 mt-1">{selectedSpot.chargerType}</p>
-                </div>
-                <div className="text-right">
-                  <div className="font-bold">+${selectedSpot.chargingFee}</div>
-                  <div className="text-xs text-white/60">flat fee</div>
-                </div>
-              </div>
-            )}
-
-            <div className="flex items-center justify-between border-t border-white/10 pt-6">
-              <div className="flex items-center gap-3">
-                <label className="text-sm text-white/70">Duration:</label>
-                <select 
-                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-electric-blue"
-                  value={bookingHours}
-                  onChange={(e) => setBookingHours(Number(e.target.value))}
-                >
-                  <option value={1}>1 Hour</option>
-                  <option value={2}>2 Hours</option>
-                  <option value={4}>4 Hours</option>
-                  <option value={8}>8 Hours</option>
-                </select>
-              </div>
-              <button 
-                onClick={() => {
-                  setShowCheckout(true);
-                  setPaymentState('idle');
-                }}
-                className="bg-electric-blue text-black font-semibold px-6 py-2.5 rounded-lg hover:bg-electric-blue/90 transition-colors flex items-center gap-2"
-              >
-                Reserve Spot <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+            <button onClick={() => setShowCheckout(true)} className="w-full bg-white text-black py-6 rounded-3xl font-black text-xl hover:bg-neon-green transition-all shadow-xl shadow-white/10 uppercase tracking-tighter">INITIATE FINAL CHECKOUT</button>
           </div>
         )}
 
-        {/* Checkout Modal Overlay */}
-        {selectedSpot && showCheckout && (
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-30 flex items-center justify-center p-6">
-            <div className="bg-dark-surface border border-white/10 rounded-2xl p-8 max-w-md w-full shadow-2xl">
-            {paymentState === 'success' ? (
-              <div className="text-center py-8">
-                <CheckCircle2 className="w-16 h-16 text-neon-green mx-auto mb-4" />
-                <h3 className="text-2xl font-bold mb-2">Payment Successful!</h3>
-                <p className="text-white/60 mb-6">Your spot is booked and ready.</p>
-                <button 
-                  onClick={() => { setShowCheckout(false); setPaymentState('idle'); }}
-                  className="w-full bg-white text-black font-semibold py-3 rounded-xl hover:bg-white/90 transition-colors"
-                >
-                  Done
-                </button>
-              </div>
-            ) : (
-              <>
-                <h2 className="text-2xl font-bold mb-6">Confirm Checkout</h2>
-                
-                <div className="bg-black/50 rounded-xl p-4 mb-6 space-y-3">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-white/60">Spot</span>
-                    <span>{selectedSpot.title}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-white/60">Duration</span>
-                    <span>{bookingHours} hours</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-white/60">Parking Rate</span>
-                    <span>${selectedSpot.pricePerHour}/hr</span>
-                  </div>
-                  {selectedSpot.hasEvCharging && needCharging && (
-                    <div className="flex justify-between text-sm text-neon-green">
-                      <span>Charging Add-on</span>
-                      <span>+${selectedSpot.chargingFee}</span>
-                    </div>
-                  )}
-                  
-                  <div className="border-t border-white/10 pt-3 mt-3 flex justify-between font-bold text-lg">
-                    <span>Total</span>
-                    <span className="text-electric-blue">${calculateTotal(selectedSpot).total.toFixed(2)}</span>
-                  </div>
-                </div>
+        {showCheckout && selectedSpot && (
+           <div className="absolute inset-0 bg-black/90 backdrop-blur-3xl z-[100] flex items-center justify-center p-6">
+              <div className="max-w-md w-full bg-dark-bg border border-white/10 rounded-[50px] p-12 relative overflow-hidden shadow-2xl">
+                 <button 
+                   onClick={() => { setShowCheckout(false); setPaymentState('idle'); }} 
+                   className="absolute top-10 right-10 text-white/40 hover:text-white transition-colors duration-300"
+                 >
+                   <X className="w-8 h-8" />
+                 </button>
 
-                <div className="flex flex-col items-center justify-center mb-6">
-                  <p className="text-white/50 text-sm mb-3">Scan to pay directly</p>
-                  <div className="bg-white p-2 rounded-xl relative">
-                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=ParkVoltPaymentDemo" alt="Fake QR Code" width={120} height={120} className="rounded-lg" />
-                    {paymentState === 'processing' && (
-                      <div className="absolute inset-0 bg-white/80 backdrop-blur-sm rounded-xl flex items-center justify-center">
-                        <div className="w-8 h-8 border-4 border-electric-blue border-t-transparent rounded-full animate-spin"></div>
+                 {paymentState === 'idle' && (
+                   <div className="animate-in fade-in duration-500">
+                      <div className="mb-10 text-center">
+                         <div className="w-20 h-20 bg-electric-blue/10 border border-electric-blue/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                            <CreditCard className="w-10 h-10 text-electric-blue" />
+                         </div>
+                         <h2 className="text-4xl font-black text-white tracking-tighter uppercase mb-2">Final Checkout</h2>
+                         <p className="text-sm text-white/30 font-bold uppercase tracking-widest">Connect to Payment Gateway</p>
                       </div>
-                    )}
-                  </div>
-                </div>
+                      <div className="space-y-6 mb-12">
+                         <div className="flex justify-between items-center text-xs py-5 border-b border-white/5"><span className="text-white/40 uppercase font-black tracking-widest">Selected Spot</span><span className="text-white font-bold text-sm">{selectedSpot.title}</span></div>
+                         <div className="flex justify-between items-center text-xs py-5 border-b border-white/5"><span className="text-white/40 uppercase font-black tracking-widest">Duration</span><span className="text-white font-bold text-sm tracking-widest">{duration} Hours</span></div>
+                         <div className="flex justify-between items-center text-4xl font-black uppercase tracking-tighter pt-4 text-white"><span>Total Due</span><span className="text-neon-green font-mono">₹{priceBreakdown?.totalPrice}</span></div>
+                      </div>
+                      <button 
+                        onClick={() => setPaymentState('scanning')} 
+                        className="w-full bg-electric-blue text-black py-6 rounded-[30px] font-black text-2xl hover:scale-[1.02] transition-all shadow-2xl shadow-electric-blue/20 uppercase tracking-tighter"
+                      >
+                        SCAN TO PAY
+                      </button>
+                   </div>
+                 )}
 
-                <div className="space-y-4">
-                  <button 
-                    onClick={() => {
-                      setPaymentState('processing');
-                      setTimeout(() => setPaymentState('success'), 2000);
-                    }}
-                    disabled={paymentState === 'processing'}
-                    className="w-full bg-white text-black font-semibold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-white/90 transition-colors disabled:opacity-50"
-                  >
-                    {paymentState === 'processing' ? 'Processing Transaction...' : (
-                      <><CreditCard className="w-5 h-5" /> Simulate Payment</>
-                    )}
-                  </button>
-                  <button 
-                    onClick={() => setShowCheckout(false)}
-                    disabled={paymentState === 'processing'}
-                    className="w-full bg-transparent text-white/70 py-3 rounded-xl hover:text-white transition-colors disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </>
-            )}
-            </div>
-          </div>
+                 {paymentState === 'scanning' && (
+                   <div className="text-center py-10 animate-in zoom-in duration-500">
+                      <div className="w-64 h-64 border-2 border-white/10 rounded-[40px] mx-auto mb-10 flex items-center justify-center relative overflow-hidden group">
+                         <Camera className="w-16 h-16 text-white/20" />
+                         <div className="absolute inset-0 border-[4px] border-neon-green/40 m-8 rounded-3xl"></div>
+                         <div className="absolute top-0 left-0 w-full h-[4px] bg-neon-green shadow-[0_0_15px_#22c55e] animate-scan-line"></div>
+                         <div className="absolute inset-0 bg-neon-green/5 animate-pulse"></div>
+                      </div>
+                      <h3 className="text-2xl font-black mb-4 uppercase tracking-tighter">Scanning Gateway...</h3>
+                      <p className="text-white/40 font-bold text-[10px] uppercase tracking-widest">Point your mobile lens at the terminal</p>
+                      <button onClick={() => setPaymentState('processing')} className="mt-12 text-[10px] font-black text-electric-blue hover:text-white transition-colors underline uppercase tracking-widest">Manually confirm scan</button>
+                   </div>
+                 )}
+
+                 {paymentState === 'processing' && (
+                   <div className="text-center py-20 animate-in fade-in duration-500">
+                      <div className="flex justify-center mb-10">
+                         <div className="w-16 h-16 border-4 border-white/5 border-t-electric-blue rounded-full animate-spin"></div>
+                      </div>
+                      <h3 className="text-3xl font-black mb-4 uppercase tracking-tighter">Securing Transaction...</h3>
+                      <p className="text-white/40 font-bold text-[10px] uppercase tracking-widest leading-loose">Encrypting secure payment tunnel</p>
+                   </div>
+                 )}
+
+                 {paymentState === 'success' && (
+                   <div className="text-center py-10 animate-in slide-in-from-bottom-10 duration-700">
+                      <div className="w-24 h-24 bg-neon-green border-[8px] border-neon-green/20 rounded-full flex items-center justify-center mx-auto mb-10 shadow-[0_0_40px_rgba(34,197,94,0.3)]">
+                         <CheckCircle2 className="w-12 h-12 text-black" />
+                      </div>
+                      <h3 className="text-4xl font-black mb-4 text-neon-green uppercase tracking-tighter italic">Payment Secured!</h3>
+                      <p className="text-white/60 font-bold text-xs uppercase tracking-widest mb-10">Initializing live road route</p>
+                      <button className="text-white animate-bounce"><Navigation className="w-8 h-8 mx-auto" /></button>
+                   </div>
+                 )}
+              </div>
+           </div>
         )}
       </div>
     </div>
