@@ -120,8 +120,8 @@ export default function HostDashboard() {
          </nav>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-8 relative">
-        <div className="flex justify-between items-center mb-10">
+      <div className="flex-1 overflow-y-auto p-8 relative flex flex-col h-full min-h-0">
+        <div className="flex justify-between items-center mb-10 shrink-0">
            <div><h2 className="text-4xl font-black capitalize tracking-tight">{activeTab}</h2><p className="text-white/40 text-sm mt-1 uppercase tracking-widest text-[10px] font-black">Local Vault Node</p></div>
            {activeTab === 'listings' && (
               <button onClick={() => setShowAddModal(true)} className="bg-white text-black px-8 py-3 rounded-2xl font-black text-sm flex items-center gap-2 hover:bg-neon-green transition-all shadow-xl shadow-white/5 uppercase tracking-widest"><Plus className="w-4 h-4" /> Add NEW Asset</button>
@@ -129,40 +129,42 @@ export default function HostDashboard() {
         </div>
 
         {activeTab === "listings" && (
-           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in slide-in-from-bottom-2">
-              <div className="space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar pr-2">
-                 {spots.map((spot) => (
-                    <div key={spot.id} className="bg-white/[0.03] border border-white/5 rounded-3xl p-6 hover:border-white/20 transition-all group overflow-hidden">
-                       <div className="flex justify-between items-start mb-6">
-                          <div className="flex gap-4">
-                             <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-2xl">{spot.hasEvCharging ? "🔋" : "📍"}</div>
-                             <div>
-                                <h3 className="font-bold text-lg">{spot.title}</h3>
-                                <div className="text-[10px] font-black text-white/30 tracking-widest uppercase mt-1">ID: P{spot.id.slice(0,6)} • <span className={spot.isDisabledByHost ? "text-red-500" : "text-neon-green"}>{spot.isDisabledByHost ? "Deactivated" : "Live"}</span></div>
-                             </div>
-                          </div>
-                          <div className="flex gap-2 relative z-10">
-                             <button onClick={() => toggleSpotStatus(spot.id)} className={`p-2 rounded-xl border transition-all ${spot.isDisabledByHost ? 'border-red-500 bg-red-500/10 text-red-500' : 'border-white/10 bg-white/5 text-white/40 hover:text-white'}`}><Power className="w-4 h-4" /></button>
-                             <button onClick={() => setEditingSpot(spot)} className="p-2 rounded-xl bg-white/5 text-white/40 hover:text-white transition-all"><Edit3 className="w-4 h-4" /></button>
-                             <button onClick={() => removeSpot(spot.id)} className="p-2 rounded-xl bg-white/5 text-white/40 hover:text-red-500 transition-all"><Trash2 className="w-4 h-4" /></button>
-                          </div>
-                       </div>
-                       <div className="grid grid-cols-3 gap-4 pt-4 border-t border-white/5">
-                          <div><span className="text-[9px] font-black text-white/20 uppercase block">Rate</span><span className="text-sm font-black">₹{spot.basePrice}/hr</span></div>
-                          <div><span className="text-[9px] font-black text-white/20 uppercase block">Live State</span><span className={`text-sm font-black ${spot.isAvailable ? 'text-neon-green' : 'text-orange-400'}`}>{spot.isAvailable ? 'Ready' : 'Occupied'}</span></div>
-                          <div><span className="text-[9px] font-black text-white/20 uppercase block">Zone</span><span className="text-sm font-black text-electric-blue uppercase">{spot.locationType}</span></div>
-                       </div>
-                    </div>
-                 ))}
+           <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in slide-in-from-bottom-2 min-h-0">
+              <div className="flex flex-col min-h-0 space-y-4 h-full">
+                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 pb-20">
+                    {spots.map((spot) => (
+                        <div key={spot.id} className="bg-white/[0.03] border border-white/5 rounded-3xl p-6 hover:border-white/20 transition-all group overflow-hidden mb-4">
+                           <div className="flex justify-between items-start mb-6">
+                              <div className="flex gap-4">
+                                 <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-2xl">{spot.hasEvCharging ? "🔋" : "📍"}</div>
+                                 <div>
+                                    <h3 className="font-bold text-lg">{spot.title}</h3>
+                                    <div className="text-[10px] font-black text-white/30 tracking-widest uppercase mt-1">ID: P{spot.id.slice(0,6)} • <span className={spot.isDisabledByHost ? "text-red-500" : "text-neon-green"}>{spot.isDisabledByHost ? "Deactivated" : "Live"}</span></div>
+                                 </div>
+                              </div>
+                              <div className="flex gap-2 relative z-10">
+                                 <button onClick={() => toggleSpotStatus(spot.id)} className={`p-2 rounded-xl border transition-all ${spot.isDisabledByHost ? 'border-red-500 bg-red-500/10 text-red-500' : 'border-white/10 bg-white/5 text-white/40 hover:text-white'}`}><Power className="w-4 h-4" /></button>
+                                 <button onClick={() => setEditingSpot(spot)} className="p-2 rounded-xl bg-white/5 text-white/40 hover:text-white transition-all"><Edit3 className="w-4 h-4" /></button>
+                                 <button onClick={() => removeSpot(spot.id)} className="p-2 rounded-xl bg-white/5 text-white/40 hover:text-red-500 transition-all"><Trash2 className="w-4 h-4" /></button>
+                              </div>
+                           </div>
+                           <div className="grid grid-cols-3 gap-4 pt-4 border-t border-white/5">
+                              <div><span className="text-[9px] font-black text-white/20 uppercase block">Rate</span><span className="text-sm font-black">₹{spot.basePrice}/hr</span></div>
+                              <div><span className="text-[9px] font-black text-white/20 uppercase block">Live State</span><span className={`text-sm font-black ${spot.isAvailable ? 'text-neon-green' : 'text-orange-400'}`}>{spot.isAvailable ? 'Ready' : 'Occupied'}</span></div>
+                              <div><span className="text-[9px] font-black text-white/20 uppercase block">Zone</span><span className="text-sm font-black text-electric-blue uppercase">{spot.locationType}</span></div>
+                           </div>
+                        </div>
+                    ))}
+                 </div>
               </div>
-              <div className="h-[65vh] rounded-[40px] overflow-hidden border border-white/10 relative shadow-2xl">
+              <div className="h-full min-h-[400px] rounded-[40px] overflow-hidden border border-white/10 relative shadow-2xl">
                  <MapComponent spots={spots} selectedSpot={selectedSpot} onSelectSpot={setSelectedSpot} userLocation={DEFAULT_USER_LOC} isNavigating={false} />
               </div>
            </div>
         )}
 
         {activeTab === "earnings" && (
-           <div className="space-y-8 animate-in fade-in duration-500">
+           <div className="space-y-8 animate-in fade-in duration-500 overflow-y-auto custom-scrollbar pr-4">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                  {[
                    { label: "TOTAL PAYOUTS", val: `₹${stats.totalEarnings}`, color: "text-electric-blue", icon: Banknote },
@@ -184,15 +186,17 @@ export default function HostDashboard() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 bg-white/[0.02] border border-white/5 rounded-[40px] p-8 h-[400px]">
                    <h3 className="text-sm font-black uppercase tracking-widest mb-8 text-white/30">Earnings Projection</h3>
-                   <ResponsiveContainer width="100%" height="80%">
-                      <LineChart data={stats.earningsTrend}>
-                         <CartesianGrid strokeDasharray="3 3" stroke="#ffffff0a" vertical={false} />
-                         <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#ffffff', fontSize: 11, fontWeight: 900}} />
-                         <YAxis axisLine={false} tickLine={false} tick={{fill: '#ffffff', fontSize: 11, fontWeight: 900}} />
-                         <Tooltip contentStyle={{backgroundColor: '#1a1a1e', border: '1px solid #ffffff20', borderRadius: '12px', fontSize: '11px', color: '#fff'}} itemStyle={{color: '#fff'}} />
-                         <Line type="monotone" dataKey="income" stroke="#00f0ff" strokeWidth={5} dot={{fill: '#00f0ff', r: 5}} activeDot={{r: 7, stroke: '#000', strokeWidth: 2}} />
-                      </LineChart>
-                   </ResponsiveContainer>
+                   <div className="h-[250px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                         <LineChart data={stats.earningsTrend}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff0a" vertical={false} />
+                            <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#ffffff', fontSize: 11, fontWeight: 900}} />
+                            <YAxis axisLine={false} tickLine={false} tick={{fill: '#ffffff', fontSize: 11, fontWeight: 900}} />
+                            <Tooltip contentStyle={{backgroundColor: '#1a1a1e', border: '1px solid #ffffff20', borderRadius: '12px', fontSize: '11px', color: '#fff'}} itemStyle={{color: '#fff'}} />
+                            <Line type="monotone" dataKey="income" stroke="#00f0ff" strokeWidth={5} dot={{fill: '#00f0ff', r: 5}} activeDot={{r: 7, stroke: '#000', strokeWidth: 2}} />
+                         </LineChart>
+                      </ResponsiveContainer>
+                   </div>
                 </div>
                 <div className="bg-white/[0.03] border border-white/5 p-8 rounded-[40px] overflow-hidden flex flex-col">
                    <h3 className="text-sm font-black uppercase tracking-widest mb-6 text-white/30 leading-tight">Recent Activity</h3>
@@ -219,7 +223,7 @@ export default function HostDashboard() {
         )}
 
         {activeTab === "analytics" && (
-           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in">
+           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in h-full overflow-y-auto custom-scrollbar pr-4 pb-20">
               <div className="lg:col-span-2 space-y-8">
                  <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 min-h-[400px]">
                     <h3 className="text-sm font-black uppercase tracking-widest mb-8 text-white/30">Fleet Utilization %</h3>
@@ -252,9 +256,9 @@ export default function HostDashboard() {
                     </div>
                  </div>
               </div>
-              <div className="bg-white/[0.03] border border-white/5 p-8 rounded-[40px] flex flex-col">
+              <div className="bg-white/[0.03] border border-white/5 p-8 rounded-[40px] flex flex-col h-fit">
                  <h3 className="text-sm font-black uppercase tracking-widest mb-8 text-white/30">Yield Performers</h3>
-                 <div className="space-y-4 flex-1">
+                 <div className="space-y-4">
                     {[...stats.slotUsage].sort((a,b) => b.usage - a.usage).slice(0, 5).map((u, i) => (
                        <div key={u.id} className="flex items-center justify-between p-5 bg-white/5 rounded-3xl border border-white/5 hover:border-electric-blue/20 transition-all">
                           <div>
@@ -272,6 +276,7 @@ export default function HostDashboard() {
            </div>
         )}
       </div>
+
       {/* --- ADD ASSET MODAL --- */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-3xl z-[100] flex items-center justify-center p-6">
