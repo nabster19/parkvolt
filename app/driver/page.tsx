@@ -26,7 +26,7 @@ const DEFAULT_USER_LOC: [number, number] = [12.3150, 76.6400];
 
 export default function DriverDashboard() {
   const { spots, setSpotAvailability } = useSpots();
-  const { createBooking, endBooking, getActiveBooking, bookings } = useBookings();
+  const { createBooking, startParking, endBooking, getActiveBooking, bookings } = useBookings();
   const { rewards, addCoins, useCoins, getDiscountValue } = useRewards();
   const [selectedSpot, setSelectedSpot] = useState<Spot | null>(null);
   
@@ -62,20 +62,37 @@ export default function DriverDashboard() {
 
   // 1. Live Session Telemetry (Timer)
   useEffect(() => {
-     if (!activeSession) {
+     if (!activeSession || activeSession.bookingStatus !== "active" || !activeSession.startTime) {
         setElapsedTime(0);
         return;
      }
 
      const updateTimer = () => {
-        const delta = Math.floor((Date.now() - activeSession.startTime) / 1000);
+        const delta = Math.floor((Date.now() - activeSession.startTime!) / 1000);
         setElapsedTime(delta);
      };
 
      updateTimer();
      const interval = setInterval(updateTimer, 1000);
      return () => clearInterval(interval);
-  }, [activeSession]);
+  }, [activeSession, activeSession?.bookingStatus, activeSession?.startTime]);
+
+  const isNearSpot = useMemo(() => {
+    if (!activeSession || !userLoc) return false;
+    const spot = spots.find(s => s.id === activeSession.slotId);
+    if (!spot) return false;
+    
+    // Simple Euclidean distance for "radius" check
+    const dist = Math.sqrt(Math.pow(spot.lat - userLoc[0], 2) + Math.pow(spot.lng - userLoc[1], 2));
+    // 0.001 roughly equals ~100m
+    return dist < 0.002; 
+  }, [activeSession, userLoc, spots]);
+
+  const handleStartParking = () => {
+    if (!activeSession) return;
+    const updated = startParking(activeSession.id);
+    if (updated) setActiveSession(updated);
+  };
 
   const formatElapsed = (seconds: number) => {
      const h = Math.floor(seconds / 3600);
@@ -88,8 +105,9 @@ export default function DriverDashboard() {
   useEffect(() => {
     const active = getActiveBooking();
     if (active) {
-       if (Date.now() > active.endTime) {
-          endBooking(active.id);
+       if (Date.now() > active.scheduledEndTime) {
+          const spot = spots.find(s => s.id === active.slotId);
+          endBooking(active.id, spot?.basePrice || 0);
           setSpotAvailability(active.slotId, true, undefined);
        } else {
           setActiveSession(active);
@@ -158,7 +176,7 @@ export default function DriverDashboard() {
          finalPrice = Math.max(0, finalPrice - discount);
       }
 
-      const newBooking = createBooking(selectedSpot.id, duration, finalPrice);
+      const newBooking = createBooking(selectedSpot.id, duration, finalPrice, usageType === "charging");
       setSpotAvailability(selectedSpot.id, false, newBooking.id);
       
       await fetchRealRoute(selectedSpot);
@@ -173,12 +191,21 @@ export default function DriverDashboard() {
 
   const handleEndEarly = () => {
     if (!activeSession) return;
-    const { earned } = endBooking(activeSession.id);
+    const spot = spots.find(s => s.id === activeSession.slotId);
+    const basePrice = spot?.basePrice || 0;
+    const chargingPrice = activeSession.isCharging ? 20 : 0; // Simple charging fee per hour
+    
+    const { earned, finalCost } = endBooking(activeSession.id, basePrice, chargingPrice);
+    
     if (earned > 0) {
        addCoins(earned);
-       setRewardMessage(`You earned ${earned} Parking Coins!`);
+       setRewardMessage(`Session Ended! Final: ₹${finalCost?.toFixed(2)} (${earned} coins earned)`);
+       setTimeout(() => setRewardMessage(null), 5000);
+    } else if (finalCost !== undefined) {
+       setRewardMessage(`Session Ended! Final Cost: ₹${finalCost.toFixed(2)}`);
        setTimeout(() => setRewardMessage(null), 5000);
     }
+
     setSpotAvailability(activeSession.slotId, true, undefined);
     setActiveSession(null);
     setIsNavigating(false);
@@ -216,26 +243,66 @@ export default function DriverDashboard() {
                 <div><h2 className="text-2xl font-black uppercase tracking-tighter">Live Session</h2><span className="text-[10px] text-white/30 uppercase font-black tracking-widest leading-none">Active Monitoring</span></div>
              </div>
              
-             {/* 🎯 Live Duration Display */}
+             {/* 🎯 Live Duration/Status Display */}
              <div className="bg-white/5 border border-white/10 rounded-[40px] p-8 mb-6 text-center group hover:border-neon-green/20 transition-all">
-                <div className="flex items-center justify-center gap-2 text-[10px] font-black text-neon-green uppercase tracking-[0.3em] mb-4">
-                   <div className="w-1.5 h-1.5 bg-neon-green rounded-full animate-pulse"></div> Session Duration
-                </div>
-                <div className="text-6xl font-black tabular-nums tracking-tighter text-white group-hover:scale-105 transition-transform">{formatElapsed(elapsedTime)}</div>
-                <div className="mt-4 p-3 bg-black/40 rounded-2xl border border-white/5 flex items-center justify-between">
-                   <span className="text-[10px] font-black text-white/30 uppercase">Rate</span>
-                   <span className="text-sm font-black text-electric-blue">₹{spots.find(s => s.id === activeSession.slotId)?.basePrice}/hr</span>
-                </div>
+                {activeSession.bookingStatus === "confirmed" ? (
+                  <>
+                    <div className="flex items-center justify-center gap-2 text-[10px] font-black text-electric-blue uppercase tracking-[0.3em] mb-4">
+                       <div className="w-1.5 h-1.5 bg-electric-blue rounded-full"></div> Booking confirmed. Waiting for arrival.
+                    </div>
+                    {isNearSpot && (
+                      <div className="mb-6 animate-in zoom-in duration-500">
+                        <div className="px-4 py-1.5 rounded-full bg-neon-green/20 border border-neon-green/40 text-neon-green text-[9px] font-black uppercase tracking-[0.2em] inline-flex items-center gap-2">
+                          <CheckCircle2 className="w-3 h-3" /> Near Location
+                        </div>
+                      </div>
+                    )}
+                    <div className="text-4xl font-black tracking-tighter text-white/40 uppercase mb-4">NOT STARTED</div>
+                    <p className="text-[10px] font-bold text-white/20 uppercase mb-6">Timer begins when you click arrival confirmation</p>
+                    <button 
+                      onClick={handleStartParking}
+                      className={`w-full py-4 rounded-2xl font-black flex items-center justify-center gap-2 transition-all shadow-lg bg-neon-green text-black hover:bg-neon-green/80 shadow-neon-green/20`}
+                    >
+                      <Zap className="w-4 h-4" /> I HAVE ARRIVED
+                    </button>
+                    {!isNearSpot && (
+                      <p className="mt-3 text-[9px] font-bold text-electric-blue flex items-center justify-center gap-1.5 uppercase">
+                        <Navigation className="w-3 h-3 text-electric-blue" /> Note: Proximity check bypassed for demo.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-center gap-2 text-[10px] font-black text-neon-green uppercase tracking-[0.3em] mb-4">
+                       <div className="w-1.5 h-1.5 bg-neon-green rounded-full animate-pulse"></div> Parking in progress
+                    </div>
+                    <div className="text-6xl font-black tabular-nums tracking-tighter text-white group-hover:scale-105 transition-transform">{formatElapsed(elapsedTime)}</div>
+                    <div className="mt-4 p-3 bg-black/40 rounded-2xl border border-white/5 flex items-center justify-between">
+                       <span className="text-[10px] font-black text-white/30 uppercase">Rate</span>
+                       <span className="text-sm font-black text-electric-blue">₹{spots.find(s => s.id === activeSession.slotId)?.basePrice}/hr</span>
+                    </div>
+                  </>
+                )}
              </div>
 
              <div className="bg-white/5 border border-white/10 rounded-[40px] p-8 mb-6">
                 <h3 className="text-xl font-bold truncate mb-1">{spots.find(s => s.id === activeSession.slotId)?.title}</h3>
                 <p className="text-white/40 text-sm mb-6 flex items-center gap-2"><Navigation className="w-4 h-4 text-electric-blue" /> Optimal road route active.</p>
-                <div className="bg-black/40 p-5 rounded-2xl border border-white/5"><span className="text-[10px] text-white/20 uppercase font-black block mb-1">Session ID</span><div className="text-xl font-black text-neon-green uppercase tracking-tighter">PRK-{activeSession.id.toUpperCase()}</div></div>
+                <div className="bg-black/40 p-5 rounded-2xl border border-white/5 flex justify-between items-center whitespace-nowrap">
+                  <div>
+                    <span className="text-[10px] text-white/20 uppercase font-black block mb-1">Session ID</span>
+                    <div className="text-xl font-black text-neon-green uppercase tracking-tighter">PRK-{activeSession.id.toUpperCase()}</div>
+                  </div>
+                  {isNearSpot && activeSession.bookingStatus === "confirmed" && (
+                    <div className="bg-neon-green text-black px-3 py-1 rounded-lg text-[8px] font-black uppercase flex items-center gap-1.5 animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.3)]">
+                      <MapPin className="w-2.5 h-2.5" /> Arrived
+                    </div>
+                  )}
+                </div>
              </div>
              <div className="space-y-3 mb-8">
                 <button onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${spots.find(s => s.id === activeSession.slotId)?.lat},${spots.find(s => s.id === activeSession.slotId)?.lng}`, "_blank")} className="w-full bg-white/5 border border-white/10 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-white/10 transition-all"><ExternalLink className="w-4 h-4" /> GOOGLE MAPS BRIDGE</button>
-                <button onClick={handleEndEarly} className="w-full bg-red-500 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-red-600 transition-all shadow-lg shadow-red-500/20"><X className="w-4 h-4" /> TERMINATE PARKING</button>
+                <button onClick={handleEndEarly} className="w-full bg-red-500 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-red-600 transition-all shadow-lg shadow-red-500/20"><X className="w-4 h-4" /> END PARKING</button>
              </div>
           </div>
         ) : (

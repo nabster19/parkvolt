@@ -62,15 +62,16 @@ model Booking {
   spotId          String
   spot            ParkingSpot @relation(fields: [spotId], references: [id])
   
-  startTime       DateTime
-  endTime         DateTime
+  scheduledStartTime DateTime
+  startTime         DateTime? // Actual arrival/start time
+  endTime           DateTime
   
   // Cost breakdown
   parkingCost     Float
   chargingCost    Float    @default(0)
   totalCost       Float
   
-  status          String   @default("PENDING") // PENDING, CONFIRMED, COMPLETED, CANCELLED
+  bookingStatus   String   @default("PENDING") // PENDING, CONFIRMED, ACTIVE, COMPLETED, CANCELLED
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

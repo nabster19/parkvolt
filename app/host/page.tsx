@@ -38,18 +38,19 @@ export default function HostDashboard() {
   // --- Analytics & Financial Logic ---
   const stats = useMemo(() => {
     const now = Date.now();
-    const completed = bookings.filter(b => b.status === "completed").sort((a,b) => b.startTime - a.startTime);
+    const completed = bookings.filter(b => b.bookingStatus === "completed").sort((a,b) => (b.startTime || b.scheduledStartTime) - (a.startTime || a.scheduledStartTime));
     
     const totalEarnings = completed.reduce((sum, b) => sum + b.pricePaid, 0);
-    const todayEarnings = completed.filter(b => now - b.startTime < 86400000).reduce((sum, b) => sum + b.pricePaid, 0);
-    const activeCount = bookings.filter(b => b.status === "active").length;
+    const todayEarnings = completed.filter(b => now - (b.startTime || b.scheduledStartTime) < 86400000).reduce((sum, b) => sum + b.pricePaid, 0);
+    const activeCount = bookings.filter(b => b.bookingStatus === "active").length;
 
     const slotUsage = spots.map(spot => {
       const spotBookings = bookings.filter(b => b.slotId === spot.id);
-      const spotEarnings = spotBookings.filter(b => b.status === "completed").reduce((s, b) => s + b.pricePaid, 0);
+      const spotEarnings = spotBookings.filter(b => b.bookingStatus === "completed").reduce((s, b) => s + b.pricePaid, 0);
       const totalBookedMinutes = spotBookings.reduce((sum, b) => {
-        const end = b.actualEndTime || b.endTime;
-        return sum + (end - b.startTime) / 60000;
+        const end = b.endTime || b.scheduledEndTime;
+        const start = b.startTime || b.scheduledStartTime;
+        return sum + (end - start) / 60000;
       }, 0);
       
       const availableTime = 7 * 24 * 60; 
@@ -206,7 +207,7 @@ export default function HostDashboard() {
                          return (
                             <div key={b.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5 border-l-4 border-l-neon-green">
                                <div className="flex-1">
-                                  <div className="text-[9px] font-bold text-white/20 uppercase mb-1">{new Date(b.startTime).toLocaleDateString()}</div>
+                                  <div className="text-[9px] font-bold text-white/20 uppercase mb-1">{new Date(b.startTime || b.scheduledStartTime).toLocaleDateString()}</div>
                                   <div className="font-bold text-xs truncate max-w-[120px]">{spot?.title || "Removed Slot"}</div>
                                </div>
                                <div className="text-right">
